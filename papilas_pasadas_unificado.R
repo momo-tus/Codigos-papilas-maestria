@@ -3,6 +3,8 @@ install.packages("tidyverse")
 install.packages("rstatix")
 install.packages("ggpubr")
 install.packages("glmmTMB")
+install.packages("multcomp")
+library(multcomp)
 library(dplyr)                  
 library(rstatix)
 library(ggplot2)
@@ -218,3 +220,103 @@ data_pasadas_conjunto$Papilas=as.factor(data_pasadas_conjunto$Papilas)
 data_pasadas_conjunto$Fosetas=as.factor(data_pasadas_conjunto$Fosetas)
 data_pasadas_conjunto$Trat=as.factor(data_pasadas_conjunto$Trat)
 data_pasadas_conjunto$Pasada=as.numeric(data_pasadas_conjunto$Pasada)
+
+##ESTADISTICOS 
+tabla_varianza <- data_pasadas_conjunto %>%
+  group_by(Trat) %>%
+  summarise(
+    Total_Observaciones = n(),
+    Suma_Total = sum(Reacciones, na.rm = TRUE),
+    Media = mean(Reacciones, na.rm = TRUE),
+    Varianza = var(Reacciones, na.rm = TRUE),
+    Desviacion_Estandar = sd(Reacciones, na.rm = TRUE)
+  )
+
+print(tabla_varianza)
+
+data_pasadas_conjunto%>%
+  group_by(Papilas,Fosetas, Estimulo, Pasada) %>%
+  get_summary_stats(Reacciones, type = "mean_sd")
+
+#POISSON con inflacion porque tiene muchos 0 
+
+m_pois3<- glmmTMB(Reacciones ~ Trat + Pasada +(1 | ID),
+                  ziformula = ~ 1,
+                  family = poisson,
+                  data = data_pasadas_conjunto)
+summary(m_pois3)
+
+res_simulados3 <- simulateResiduals(m_pois3)
+plot(res_simulados3)
+
+#DIAGNOSTICO
+diagnose(m_pois3)
+# Sobredispersión no hay p>0.05
+testDispersion(res_simulados3)
+
+# Outliers 
+testOutliers(res_simulados3)
+
+# Uniformidad rozando
+testUniformity(res_simulados3)
+
+# uniformidad entre tratamientos ME SALE UN ERROR QUE NO ENTIENDO 
+testCategorical(
+  res_simulados3,
+  catPred = data_pasadas_conjunto$Trat
+)
+
+# Uniformidad chiqui entre especies asper pero el resto sale bien entonces yo lo dejaria asi
+testCategorical(
+  res_simulados,
+  catPred = data_pasadas_conjunto$Especie
+)
+
+
+## COMPARACIÓN DE MEDIAS
+emm <- emmeans(m_pois3,~ Trat,
+               type = "response")
+
+pairs(emm, adjust = "tukey")
+
+
+##GRAFICA
+significancias <- cld(
+  emm,
+  adjust = "tukey",
+  Letters = letters
+)
+
+
+significancias <- as.data.frame(significancias)
+emm<- as.data.frame(emm)
+
+ggplot(emm, aes(x = Trat, y = rate)) +
+  
+  geom_errorbar(
+    aes(ymin = asymp.LCL, ymax = asymp.UCL),
+    width = 0.12,
+    linewidth = 0.7
+  ) +
+  
+  geom_point(
+    size = 3
+  ) +
+  
+  geom_text(
+    data = significancias,
+    aes(
+      x = Trat,
+      y = asymp.UCL,
+      label = .group
+    ),
+    vjust = -0.6,
+    size = 5
+  ) +
+  
+  labs(
+    x = "Tratamiento",
+    y = "Media estimada de reacciones"
+  ) +
+  
+  theme_classic(base_size = 13)
